@@ -5,13 +5,12 @@ import (
 	"fmt"
 	"github.com/bwmarrin/discordgo"
 	"github.com/loganjspears/joker/hand"
+	"github.com/loganjspears/joker/table"
 	"log"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/loganjspears/joker/table"
 )
 
 const (
@@ -34,10 +33,6 @@ type Table struct {
 	hasSentCards      bool
 	printedBoardState int
 	stopAfterDone     bool
-}
-
-func (t *Table) HandleMessage(m *discordgo.MessageCreate) {
-
 }
 
 func (t *Table) Run() {
