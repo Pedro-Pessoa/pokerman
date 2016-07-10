@@ -3,8 +3,8 @@ package main
 import (
 	"errors"
 	"github.com/bwmarrin/discordgo"
-	"github.com/loganjspears/joker/hand"
-	"github.com/loganjspears/joker/table"
+	"github.com/jonas747/joker/hand"
+	"github.com/jonas747/joker/table"
 	"log"
 	"sync"
 )
@@ -249,7 +249,7 @@ func (t *TableManager) HandleEvent(e interface{}) error {
 
 				playerCast := p.Player().(*TablePlayer)
 
-				if tbl.Running {
+				if tbl.Running && !p.Out() {
 					playerCast.LeaveAfterFold = true
 					go SurelySend(evt.Channel, "Leaving after round (fold if you just want to begone)")
 					tbl.Unlock()

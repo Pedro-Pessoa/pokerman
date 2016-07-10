@@ -3,9 +3,8 @@ package main
 import (
 	"errors"
 	"fmt"
-	"github.com/bwmarrin/discordgo"
-	"github.com/loganjspears/joker/hand"
-	"github.com/loganjspears/joker/table"
+	"github.com/jonas747/joker/hand"
+	"github.com/jonas747/joker/table"
 	"log"
 	"strconv"
 	"strings"
@@ -200,7 +199,7 @@ func (p *TablePlayer) Action() (table.Action, int) {
 	}
 
 	go SurelySend(p.Table.Channel, fmt.Sprintf("<@%s>'s Turn, Chips: %d, MinRaise: %d, MaxRaise: %d, Actions: **%s**, Pot: **%d**",
-		p.Id, current.Chips(), p.Table.Table.MinRaise()-p.Table.Table.Outstanding(), p.Table.Table.MaxRaise()-p.Table.Table.Outstanding(), actions, p.Table.Table.Pot().Chips()))
+		p.Id, current.Chips(), p.Table.Table.MinRaise(), p.Table.Table.MaxRaise(), actions, p.Table.Table.Pot().Chips()))
 
 	// Fold automatically after 30 seconds
 	after := time.After(time.Minute * 3)
@@ -275,6 +274,11 @@ func (p *TablePlayer) Action() (table.Action, int) {
 
 		if action == table.Raise {
 			chips += int64(p.Table.Table.Outstanding())
+		}
+
+		if chips == 0 {
+			go SurelySend(p.Table.Channel, "Can't raise/bet 0 >:(")
+			continue
 		}
 
 		return action, int(chips)

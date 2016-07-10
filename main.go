@@ -9,11 +9,10 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
-	"time"
 )
 
 const (
-	VERSION = "PokerMan 0.1 Alpha"
+	VERSION = "PokerMan 0.2 Alpha"
 )
 
 var (
