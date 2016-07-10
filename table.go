@@ -131,6 +131,9 @@ func GiveMoney(id, name string, money int) {
 
 func (t *Table) SendPlayerCards() {
 	for _, player := range t.Table.Players() {
+		if player.Out() {
+			continue
+		}
 
 		tablePlayer, ok := player.Player().(*TablePlayer)
 		if !ok {
@@ -276,8 +279,8 @@ func (p *TablePlayer) Action() (table.Action, int) {
 			chips += int64(p.Table.Table.Outstanding())
 		}
 
-		if chips == 0 {
-			go SurelySend(p.Table.Channel, "Can't raise/bet 0 >:(")
+		if chips <= 0 {
+			go SurelySend(p.Table.Channel, "Can't raise/bet anythign less then 1 >:(")
 			continue
 		}
 
