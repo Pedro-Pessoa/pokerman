@@ -187,6 +187,7 @@ func (p *TablePlayer) Action() (table.Action, int) {
 	// }
 
 	current := p.Table.Table.CurrentPlayer()
+	outstanding := p.Table.Table.Outstanding()
 
 	validActions := p.Table.Table.ValidActions()
 	actions := ""
@@ -197,12 +198,15 @@ func (p *TablePlayer) Action() (table.Action, int) {
 
 		actions += string(v)
 		if v == table.Call {
-			actions += fmt.Sprintf(" (%d)", p.Table.Table.Outstanding())
+			actions += fmt.Sprintf(" (%d)", outstanding)
 		}
 	}
 
+	min := p.Table.Table.MinRaise() // - outstanding
+	max := p.Table.Table.MaxRaise() // - outstanding
+
 	go SurelySend(p.Table.Channel, fmt.Sprintf("<@%s>'s Turn, Chips: %d, MinRaise: %d, MaxRaise: %d, Actions: **%s**, Pot: **%d**",
-		p.Id, current.Chips(), p.Table.Table.MinRaise(), p.Table.Table.MaxRaise(), actions, p.Table.Table.Pot().Chips()))
+		p.Id, current.Chips(), min, max, actions, p.Table.Table.Pot().Chips()))
 
 	// Fold automatically after 30 seconds
 	after := time.After(time.Minute * 3)
@@ -275,9 +279,9 @@ func (p *TablePlayer) Action() (table.Action, int) {
 			continue
 		}
 
-		if action == table.Raise {
-			chips += int64(p.Table.Table.Outstanding())
-		}
+		// if action == table.Raise {
+		// 	chips += int64(p.Table.Table.Outstanding())
+		// }
 
 		if chips <= 0 {
 			go SurelySend(p.Table.Channel, "Can't raise/bet anythign less then 1 >:(")
