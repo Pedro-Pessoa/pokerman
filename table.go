@@ -25,6 +25,9 @@ type Table struct {
 	Table   *table.Table
 	Manager *TableManager
 
+	Owner     string
+	OwnerName string
+
 	Channel    string
 	MessageEvt chan *PlayerMessage
 	Running    bool
@@ -104,6 +107,7 @@ func (t *Table) run() {
 			if player.LeaveAfterFold && (player.foldedAndReadyToLeave || results != nil) {
 				money := v.Chips()
 				t.Table.Stand(v.Player())
+				t.CheckReplaceOwner()
 
 				go GiveMoney(player.Id, player.Name, money)
 				go SurelySend(t.Channel, fmt.Sprintf("%s stood up", player.Name))
@@ -152,6 +156,25 @@ func (t *Table) SendPlayerCards() {
 		cardsStr += "]"
 
 		go SurelySend(tablePlayer.PrivateChannel, fmt.Sprintf("Your hand\n```\n%s\n```\n%s", createAsciiCards(cards, " "), cardsStr))
+	}
+}
+
+// Checks if the owner of the table is at the table, if not replace him
+func (t *Table) CheckReplaceOwner() {
+	for _, p := range t.Table.Players() {
+		id := p.Player().ID()
+		if id == t.Owner {
+			return // Owner is at the table
+		}
+	}
+
+	// Owner not at the table, assign a new one
+	for _, p := range t.Table.Players() {
+		t.Owner = p.Player().ID()
+		cast := p.Player().(*TablePlayer)
+		t.OwnerName = cast.Name
+		go SurelySend(t.Channel, "New owner for table: "+cast.Name)
+		return
 	}
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"github.com/bwmarrin/discordgo"
 	"github.com/jonas747/joker/hand"
 	"github.com/jonas747/joker/table"
@@ -38,6 +39,15 @@ type RemovePlayerEvt struct {
 
 type DestroyTableEvt struct {
 	Channel string
+}
+
+type PrintInfoEvt struct {
+	Channel string
+}
+
+type ChangeSettingsEvt struct {
+	PlayerId string
+	settings map[string]interface{}
 }
 
 type StopEvt struct {
@@ -85,7 +95,6 @@ func (t *TableManager) Run() {
 }
 
 func (t *TableManager) GracefullShutdown() {
-	// TODO....
 	// Set tables to last round mode and wait till rounds are over
 	for _, v := range t.tables {
 		v.Lock()
@@ -117,6 +126,8 @@ func (t *TableManager) HandleEvent(e interface{}) error {
 					go func() {
 						tbl.MessageEvt <- &PlayerMessage{From: authorId, Message: evt.Content}
 					}()
+					tbl.Unlock()
+					break
 				}
 			}
 			tbl.Unlock()
@@ -124,11 +135,9 @@ func (t *TableManager) HandleEvent(e interface{}) error {
 	case *CreateTableEvt:
 
 		// Check if there is already a table in this channel
-		for _, tbl := range t.tables {
-			if tbl.Channel == evt.Channel {
-				go SurelySend(evt.Channel, "There's already a game running in this channel")
-				return nil
-			}
+		if t.GetTable(evt.Channel) != nil {
+			go SurelySend(evt.Channel, "There's already a game running in this channel")
+			return nil
 		}
 
 		if evt.Small < 1 {
@@ -145,9 +154,12 @@ func (t *TableManager) HandleEvent(e interface{}) error {
 			NumOfSeats: 10,
 		}
 		coreTable := table.New(opts, hand.NewDealer())
+
 		tbl := &Table{
 			Table:      coreTable,
 			Channel:    evt.Channel,
+			Owner:      evt.PlayerID,
+			OwnerName:  evt.Name,
 			MessageEvt: make(chan *PlayerMessage),
 		}
 
@@ -180,6 +192,12 @@ func (t *TableManager) HandleEvent(e interface{}) error {
 		t.tables = append(t.tables, tbl)
 		go SurelySend(evt.Channel, "Created table, get atleast 2 people to join before you can start")
 	case *AddPlayerEvt:
+		tbl := t.GetTable(evt.Channel)
+		if tbl == nil {
+			go SurelySend(evt.Channel, "No table here")
+			return nil
+		}
+
 		tp := &TablePlayer{
 			Id:             evt.PlayerID,
 			PrivateChannel: evt.PrivateChannel,
@@ -193,83 +211,74 @@ func (t *TableManager) HandleEvent(e interface{}) error {
 			player.Unlock()
 			return nil
 		}
+
 		// Subtract buyin money
 		player.Money -= evt.BuyIn
 		player.Unlock()
 
-		didJoin := false
+		foundSeat := false
+		tbl.Lock()
+		for i := 0; i < tbl.Table.NumOfSeats(); i++ {
+			err := tbl.Table.Sit(tp, i, evt.BuyIn)
+			if err == nil {
+				foundSeat = true
+				go SurelySend(evt.Channel, evt.Name+" Joined the table")
+				break
+			} else if err != table.ErrSeatOccupied {
+				go SurelySend(evt.Channel, "Error joining table: "+err.Error())
+				break
+			}
+		}
+		if !foundSeat {
+			go SurelySend(evt.Channel, "No available seats :(")
+			player.Lock()
+			player.Money += evt.BuyIn
+			player.Unlock()
+		} else {
+			tp.Table = tbl
+		}
+		tbl.Unlock()
 
-		for _, tbl := range t.tables {
-			tbl.Lock()
-			if tbl.Channel == evt.Channel {
-				foundSeat := false
-				for i := 0; i < tbl.Table.NumOfSeats(); i++ {
-					err := tbl.Table.Sit(tp, i, evt.BuyIn)
-					if err == nil {
-						foundSeat = true
-						didJoin = true
-						go SurelySend(evt.Channel, evt.Name+" Joined the table")
-						break
-					} else if err != table.ErrSeatOccupied {
-						go SurelySend(evt.Channel, "Error joining table: "+err.Error())
-						break
-					}
-				}
-				if !foundSeat {
-					go SurelySend(evt.Channel, "No available seats :(")
-				} else {
-					tp.Table = tbl
-				}
+	case *RemovePlayerEvt:
+		tbl := t.GetTable(evt.Channel)
+		if tbl == nil {
+			return nil
+		}
+
+		tbl.Lock()
+		var p *table.PlayerState
+		for _, player := range tbl.Table.Players() {
+			if player.Player().ID() == evt.PlayerID {
+				p = player
+				break
+			}
+		}
+		if p == nil {
+			go SurelySend(evt.Channel, "You're not in the game")
+			return nil
+		}
+
+		playerCast := p.Player().(*TablePlayer)
+
+		if tbl.Running && !p.Out() {
+			playerCast.LeaveAfterFold = true
+			go SurelySend(evt.Channel, "Leaving after round (fold if you just want to begone)")
+			tbl.Unlock()
+		} else {
+
+			tbl.Table.Stand(p.Player())
+			go SurelySend(evt.Channel, "You stoop up")
+			tbl.CheckReplaceOwner()
+			// Destroy it
+			if len(tbl.Table.Players()) < 1 {
+				t.RemoveTable(tbl.Channel)
 			}
 			tbl.Unlock()
 
-			if !didJoin {
-				// Add the money back if we didnt join
-				player.Lock()
-				player.Money += evt.BuyIn
-				player.Unlock()
-			}
-		}
-	case *RemovePlayerEvt:
-		for _, tbl := range t.tables {
-			if tbl.Channel == evt.Channel {
-				var p *table.PlayerState
-				tbl.Lock()
-
-				for _, player := range tbl.Table.Players() {
-					if player.Player().ID() == evt.PlayerID {
-						p = player
-						break
-					}
-				}
-				if p == nil {
-					go SurelySend(evt.Channel, "You're not in the game")
-					return nil
-				}
-
-				playerCast := p.Player().(*TablePlayer)
-
-				if tbl.Running && !p.Out() {
-					playerCast.LeaveAfterFold = true
-					go SurelySend(evt.Channel, "Leaving after round (fold if you just want to begone)")
-					tbl.Unlock()
-				} else {
-
-					tbl.Table.Stand(p.Player())
-					go SurelySend(evt.Channel, "You stoop up")
-
-					// Destroy it
-					if len(tbl.Table.Players()) < 1 {
-						t.RemoveTable(tbl.Channel)
-					}
-					tbl.Unlock()
-
-					player := playerManager.GetCreatePlayer(evt.PlayerID, playerCast.Name)
-					player.Lock()
-					player.Money += p.Chips()
-					player.Unlock()
-				}
-			}
+			player := playerManager.GetCreatePlayer(evt.PlayerID, playerCast.Name)
+			player.Lock()
+			player.Money += p.Chips()
+			player.Unlock()
 		}
 	case *DestroyTableEvt:
 		t.RemoveTable(evt.Channel)
@@ -292,6 +301,16 @@ func (t *TableManager) HandleEvent(e interface{}) error {
 				tbl.Unlock()
 			}
 		}
+	case *PrintInfoEvt:
+		tbl := t.GetTable(evt.Channel)
+
+		if tbl != nil {
+			tbl.Lock()
+			t.SendTableInfo(evt.Channel, tbl)
+			tbl.Unlock()
+		}
+
+	case *ChangeSettingsEvt:
 	}
 
 	return nil
@@ -305,4 +324,29 @@ func (t *TableManager) RemoveTable(channel string) {
 			break
 		}
 	}
+}
+
+func (t *TableManager) SendTableInfo(channel string, tbl *Table) {
+	stakes := tbl.Table.Stakes()
+
+	tableConfigStr := fmt.Sprintf("Table Config:\n - Owner: %s\n - Game: **%s**\n -  Seats: **%d**\n - Limit: **%s**\n - Stakes (small, big, ante): **%d**, **%d**, **%d**\n",
+		tbl.OwnerName, tbl.Table.Game().String(), tbl.Table.NumOfSeats(), tbl.Table.Limit(), stakes.SmallBet, stakes.BigBet, stakes.Ante)
+
+	playersStr := ""
+
+	for k, v := range tbl.Table.Players() {
+		tablePlayer := v.Player().(*TablePlayer)
+		playersStr += fmt.Sprintf("Seat [%d] %s: $%d\n", k, tablePlayer.Name, v.Chips())
+	}
+
+	go SurelySend(channel, tableConfigStr+"\n"+playersStr)
+}
+
+func (t *TableManager) GetTable(channel string) *Table {
+	for _, tbl := range t.tables {
+		if tbl.Channel == channel {
+			return tbl
+		}
+	}
+	return nil
 }
