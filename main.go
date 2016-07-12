@@ -99,7 +99,6 @@ func HandleSignal(stopchan chan os.Signal) {
 
 func HandleReady(s *discordgo.Session, r *discordgo.Ready) {
 	log.Println("Ready received! Connected to", len(s.State.Guilds), "Guilds")
-	log.Println(s.State.MaxMessageCount)
 }
 
 func HandleServerJoin(s *discordgo.Session, g *discordgo.GuildCreate) {

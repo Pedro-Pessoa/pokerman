@@ -136,19 +136,7 @@ func (t *Table) SendPlayerCards() {
 		if !ok {
 			panic("Failed casting to tableplayer??")
 		}
-		holeCards := player.HoleCards()
-		cards := make([]*hand.Card, len(holeCards))
-		cardsStr := "["
-		for k, hc := range holeCards {
-			if k != 0 {
-				cardsStr += ", "
-			}
-			cardsStr += string(hc.Card.Rank()) + " " + string(hc.Card.Suit())
-			cards[k] = hc.Card
-		}
-		cardsStr += "]"
-
-		go SurelySend(tablePlayer.PrivateChannel, fmt.Sprintf("Your hand\n```\n%s\n```\n%s", createAsciiCards(cards, " "), cardsStr))
+		tablePlayer.SendCards(player)
 	}
 }
 
@@ -171,13 +159,68 @@ func (t *Table) CheckReplaceOwner() {
 	}
 }
 
+// Sends the table if it has changed
+func (t *Table) MaybeSendTable() {
+
+	board := t.Table.Board()
+	if len(board) > 0 && t.printedBoardState < len(board) {
+
+		cardsStr := "["
+		for k, c := range board {
+			if k != 0 {
+				cardsStr += ", "
+			}
+			cardsStr += string(c.Rank()) + " " + string(c.Suit())
+		}
+		cardsStr += "]"
+
+		go SurelySend(t.Channel, fmt.Sprintf("Board\n```\n%s\n```\n%s", createAsciiCards(board, " "), cardsStr))
+		t.printedBoardState = len(board)
+	}
+}
+
+func (t *Table) ChangeSetting(key string, strVal string) {
+
+	trimmed := strings.TrimSpace(strVal)
+
+	floatVal, _ := strconv.ParseFloat(trimmed, 64)
+	intVal := int(floatVal)
+
+	currentConfig := t.Table.Config()
+
+	switch strings.ToLower(key) {
+	case "smallbet", "small":
+		currentConfig.Stakes.SmallBet = intVal
+	case "bigbet", "big":
+		currentConfig.Stakes.BigBet = intVal
+	case "ante":
+		currentConfig.Stakes.Ante = intVal
+	case "limit":
+		switch strings.ToLower(strVal) {
+		case "nl", "no", "nolimit":
+			currentConfig.Limit = table.NoLimit
+		case "fl", "fixed", "fixedlimit":
+			currentConfig.Limit = table.FixedLimit
+		case "pl", "pot", "potlimit":
+			currentConfig.Limit = table.PotLimit
+		}
+	case "seats":
+		currentConfig.NumOfSeats = intVal
+	case "game":
+		go SurelySend(t.Channel, "TODO")
+	}
+
+	t.Table.SetConfig(currentConfig)
+}
+
 type TablePlayer struct {
 	Table          *Table
 	Id             string
 	Name           string
 	PrivateChannel string
+	LeaveAfterFold bool
 
-	LeaveAfterFold        bool
+	receivedCards         bool
 	foldedAndReadyToLeave bool
 }
 
@@ -197,6 +240,10 @@ func (p *TablePlayer) FromID(id string) (table.Player, error) {
 func (p *TablePlayer) Action() (table.Action, int) {
 
 	current := p.Table.Table.CurrentPlayer()
+	if !p.receivedCards {
+		p.SendCards(current)
+	}
+
 	outstanding := p.Table.Table.Outstanding()
 
 	validActions := p.Table.Table.ValidActions()
@@ -300,58 +347,20 @@ func (p *TablePlayer) Action() (table.Action, int) {
 	return table.Fold, 0
 }
 
-// Sends the table if it has changed
-func (t *Table) MaybeSendTable() {
-
-	board := t.Table.Board()
-	if len(board) > 0 && t.printedBoardState < len(board) {
-
-		cardsStr := "["
-		for k, c := range board {
-			if k != 0 {
-				cardsStr += ", "
-			}
-			cardsStr += string(c.Rank()) + " " + string(c.Suit())
+func (p *TablePlayer) SendCards(player *table.PlayerState) {
+	holeCards := player.HoleCards()
+	cards := make([]*hand.Card, len(holeCards))
+	cardsStr := "["
+	for k, hc := range holeCards {
+		if k != 0 {
+			cardsStr += ", "
 		}
-		cardsStr += "]"
-
-		go SurelySend(t.Channel, fmt.Sprintf("Board\n```\n%s\n```\n%s", createAsciiCards(board, " "), cardsStr))
-		t.printedBoardState = len(board)
+		cardsStr += string(hc.Card.Rank()) + " " + string(hc.Card.Suit())
+		cards[k] = hc.Card
 	}
-}
-
-func (t *Table) ChangeSetting(key string, strVal string) {
-
-	trimmed := strings.TrimSpace(strVal)
-
-	floatVal, _ := strconv.ParseFloat(trimmed, 64)
-	intVal := int(floatVal)
-
-	currentConfig := t.Table.Config()
-
-	switch strings.ToLower(key) {
-	case "smallbet", "small":
-		currentConfig.Stakes.SmallBet = intVal
-	case "bigbet", "big":
-		currentConfig.Stakes.BigBet = intVal
-	case "ante":
-		currentConfig.Stakes.Ante = intVal
-	case "limit":
-		switch strings.ToLower(strVal) {
-		case "nl", "no", "nolimit":
-			currentConfig.Limit = table.NoLimit
-		case "fl", "fixed", "fixedlimit":
-			currentConfig.Limit = table.FixedLimit
-		case "pl", "pot", "potlimit":
-			currentConfig.Limit = table.PotLimit
-		}
-	case "seats":
-		currentConfig.NumOfSeats = intVal
-	case "game":
-		go SurelySend(t.Channel, "TODO")
-	}
-
-	t.Table.SetConfig(currentConfig)
+	cardsStr += "]"
+	p.receivedCards = true
+	go SurelySend(p.PrivateChannel, fmt.Sprintf("Your hand\n```\n%s\n```\n%s", createAsciiCards(cards, " "), cardsStr))
 }
 
 func createAsciiCards(cards []*hand.Card, spacing string) string {
