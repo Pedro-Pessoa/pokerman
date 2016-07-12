@@ -438,7 +438,7 @@ func GetAction(input string) *Action {
 		return nil
 	}
 
-	ta, err := TableAction(lower[0])
+	ta, err := TableAction(split[0])
 	if err == nil {
 		rest := ""
 		if len(split) > 1 {
