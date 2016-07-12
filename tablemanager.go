@@ -231,14 +231,15 @@ func (t *TableManager) HandleEvent(e interface{}) error {
 			}
 		}
 		if !foundSeat {
+			tbl.Unlock()
 			go SurelySend(evt.Channel, "No available seats :(")
 			player.Lock()
 			player.Money += evt.BuyIn
 			player.Unlock()
 		} else {
 			tp.Table = tbl
+			tbl.Unlock()
 		}
-		tbl.Unlock()
 
 	case *RemovePlayerEvt:
 		tbl := t.GetTable(evt.Channel)
