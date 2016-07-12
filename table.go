@@ -29,14 +29,27 @@ type Table struct {
 	Owner     string
 	OwnerName string
 
-	Channel       string
-	ActionEvt     chan *ActionEvt
-	Running       bool
-	WaitingToJoin []*TablePlayer
+	Channel   string // The channel this table belongs to
+	ActionEvt chan *ActionEvt
+	Running   bool
+	TimeOut   int // Time in seconds before player folds automatically
+
+	BannedPlayers []string // Banned player ids
 
 	hasSentCards      bool
 	printedBoardState int
-	stopAfterDone     bool
+
+	stopAfterDone      bool // Set to true to stop the table
+	serverShuttingDown bool // If set will also destroy the table when stopping
+}
+
+func (t *Table) IsPlayerBanned(id string) bool {
+	for _, v := range t.BannedPlayers {
+		if v == id {
+			return true
+		}
+	}
+	return false
 }
 
 func (t *Table) Run() {
@@ -50,7 +63,7 @@ func (t *Table) Run() {
 	t.Running = false
 
 	t.Unlock()
-	go SurelySend(t.Channel, "Stopped table")
+	SurelySend(t.Channel, "Stopped table")
 	t.emptyChannel()
 }
 
@@ -71,7 +84,7 @@ func (t *Table) run() {
 	for {
 		results, done, err := t.Table.Next()
 		if done || (results != nil && t.stopAfterDone) {
-			if t.stopAfterDone {
+			if t.serverShuttingDown {
 				for _, v := range t.Table.Players() {
 					cast := v.Player().(*TablePlayer)
 					GiveMoney(cast.Id, cast.Name, v.Chips())
@@ -82,10 +95,12 @@ func (t *Table) run() {
 
 			if results != nil {
 				msgText := "Not enough players for another hand, stopping.."
-				if t.stopAfterDone {
-					msgText = "Bot is shutting down"
+				if t.serverShuttingDown {
+					msgText = "Bot is shutting down..."
+				} else if t.stopAfterDone {
+					msgText = "Someone stopped the table..."
 				}
-				SurelySend(t.Channel, "Results:\n"+printResults(t.Table, results)+"\n"+msgText)
+				SurelySend(t.Channel, "Results:\n"+t.printResults(results)+"\n\n Reason table stopped: **"+msgText+"**")
 			}
 
 			return
@@ -94,7 +109,7 @@ func (t *Table) run() {
 		if results != nil {
 			t.hasSentCards = false
 			t.printedBoardState = 0
-			go SurelySend(t.Channel, "Results:\n"+printResults(t.Table, results)+"\nStarting next hand in 10 seconds")
+			go SurelySend(t.Channel, "Results:\n"+t.printResults(results)+"\nStarting next hand in 10 seconds")
 		}
 
 		if err != nil {
@@ -210,6 +225,8 @@ func (t *Table) ChangeSetting(key string, strVal string) {
 		}
 	case "seats":
 		currentConfig.NumOfSeats = intVal
+	case "timeout":
+		t.TimeOut = intVal
 	case "game":
 		go SurelySend(t.Channel, "TODO")
 	}
@@ -217,12 +234,55 @@ func (t *Table) ChangeSetting(key string, strVal string) {
 	t.Table.SetConfig(currentConfig)
 }
 
+func (t *Table) GetTimeout() int {
+	if t.TimeOut < 1 {
+		return 180
+	}
+	return t.TimeOut
+}
+
+func (t *Table) RemovePlayer(id string, kicked bool) error {
+	var p *table.PlayerState
+	for _, player := range t.Table.Players() {
+		if player.Player().ID() == id {
+			p = player
+			break
+		}
+	}
+	if p == nil {
+		return errors.New("Player not found")
+	}
+
+	tablePlayer := p.Player().(*TablePlayer)
+
+	if t.Running && !p.Out() {
+		tablePlayer.LeaveAfterFold = true
+		if kicked {
+			tablePlayer.AutoFold = true
+		}
+		go SurelySend(t.Channel, "Leaving after round (fold if you just want to begone)")
+	} else {
+		t.Table.Stand(p.Player())
+		go SurelySend(t.Channel, "**"+tablePlayer.Name+"** stoop up")
+		t.CheckReplaceOwner()
+		// Destroy it
+		if len(t.Table.Players()) < 1 {
+			go func() {
+				t.Manager.EvtChan <- &DestroyTableEvt{Channel: t.Channel}
+			}()
+		}
+		go GiveMoney(id, tablePlayer.Name, p.Chips())
+	}
+	return nil
+}
+
 type TablePlayer struct {
 	Table          *Table
 	Id             string
 	Name           string
 	PrivateChannel string
-	LeaveAfterFold bool
+	LeaveAfterFold bool // Player will leave after folding
+	AutoFold       bool // Set to true to force fold on players turn
 
 	foldedAndReadyToLeave bool
 }
@@ -260,34 +320,41 @@ func (p *TablePlayer) Action() (table.Action, int) {
 	go SurelySend(p.Table.Channel, fmt.Sprintf("<@%s>'s Turn, Chips: %d, MinRaise: %d, MaxRaise: %d, Actions: **%s**, Pot: **%d**",
 		p.Id, current.Chips(), min, max, actions, p.Table.Table.Pot().Chips()))
 
-	// Fold automatically after 30 seconds
-	after := time.After(time.Minute * 3)
+	// Fold automatically after timeout
+	after := time.After(time.Second * time.Duration(p.Table.GetTimeout()))
+
+MAINLOOP:
 	for {
 
 		var action *Action
 		p.Table.Unlock()
-		select {
-		case <-after:
-			canFold := false
-			for _, v := range validActions {
-				if v == table.Fold {
-					canFold = true
-					break
+
+		if p.AutoFold {
+			action = &Action{IsTableAction: true, TableAction: table.Fold}
+		} else {
+			select {
+			case <-after:
+				canFold := false
+				for _, v := range validActions {
+					if v == table.Fold {
+						canFold = true
+						break
+					}
 				}
-			}
 
-			if canFold {
-				action = &Action{IsTableAction: true, TableAction: table.Fold}
-			} else {
-				action = &Action{IsTableAction: true, TableAction: table.Check}
-			}
-		case actionEvt := <-p.Table.ActionEvt:
-			if actionEvt.PlayerID != p.Id {
-				p.Table.Lock()
-				continue
-			}
+				if canFold {
+					action = &Action{IsTableAction: true, TableAction: table.Fold}
+				} else {
+					action = &Action{IsTableAction: true, TableAction: table.Check}
+				}
+			case actionEvt := <-p.Table.ActionEvt:
+				if actionEvt.PlayerID != p.Id {
+					p.Table.Lock()
+					continue MAINLOOP
+				}
 
-			action = actionEvt.Action
+				action = actionEvt.Action
+			}
 		}
 		p.Table.Lock()
 
@@ -377,6 +444,19 @@ func (p *TablePlayer) SendCards(player *table.PlayerState) {
 	go SurelySend(p.PrivateChannel, fmt.Sprintf("Your hand\n```\n%s\n```\n%s", createAsciiCards(cards, " "), cardsStr))
 }
 
+func (t *Table) printResults(results map[int][]*table.Result) string {
+
+	out := ""
+	players := t.Table.Players()
+	for seat, resultList := range results {
+		for _, result := range resultList {
+			tablePlayer := players[seat].Player().(*TablePlayer)
+			out += fmt.Sprint(tablePlayer.Name+":", result) + "\n"
+		}
+	}
+	return out
+}
+
 func createAsciiCards(cards []*hand.Card, spacing string) string {
 	lines := make([][]string, 5)
 	for _, card := range cards {
@@ -406,18 +486,6 @@ func createAsciiCard(card *hand.Card) string {
 │  %s│
 └───┘`
 	return fmt.Sprintf(format, string(card.Suit()), string(card.Rank()), string(card.Suit()))
-}
-
-func printResults(tbl *table.Table, results map[int][]*table.Result) string {
-	out := ""
-	players := tbl.Players()
-	for seat, resultList := range results {
-		for _, result := range resultList {
-			tablePlayer := players[seat].Player().(*TablePlayer)
-			out += fmt.Sprint(tablePlayer.Name+":", result) + "\n"
-		}
-	}
-	return out
 }
 
 var AllInRegex = regexp.MustCompile("^a+ll+ i+n")

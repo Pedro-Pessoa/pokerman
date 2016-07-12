@@ -152,6 +152,37 @@ var Commands = []commandsystem.CommandHandler{
 			return nil
 		},
 	},
+	&commandsystem.SimpleCommand{
+		Name:        "Stop",
+		Description: "Stops a table, maybe to take a break or something",
+		RunFunc: func(parsed *commandsystem.ParsedCommand, m *discordgo.MessageCreate) error {
+			tableManager.EvtChan <- &StopTableEvt{PlayerID: m.Author.ID, Channel: m.ChannelID}
+			return nil
+		},
+	},
+	&commandsystem.SimpleCommand{
+		Name:        "Kick",
+		Description: "Kicks a player from your table",
+		Arguments: []*commandsystem.ArgumentDef{
+			&commandsystem.ArgumentDef{Name: "Target", Description: "Player to kick", Type: commandsystem.ArgumentTypeUser},
+		},
+		RequiredArgs: 1,
+		RunFunc: func(parsed *commandsystem.ParsedCommand, m *discordgo.MessageCreate) error {
+			target := parsed.Args[0].DiscordUser()
+			tableManager.EvtChan <- &KickPlayerEvt{PlayerID: m.Author.ID, KickPlayerID: target.ID, Channel: m.ChannelID}
+			return nil
+		},
+	},
+	&commandsystem.SimpleCommand{
+		Name:         "Ban",
+		Description:  "Bans a player from your table >:O",
+		RequiredArgs: 1,
+		RunFunc: func(parsed *commandsystem.ParsedCommand, m *discordgo.MessageCreate) error {
+			target := parsed.Args[0].DiscordUser()
+			tableManager.EvtChan <- &BanPlayerEvt{PlayerID: m.Author.ID, BanPlayerID: target.ID, Channel: m.ChannelID}
+			return nil
+		},
+	},
 	&commandsystem.CommandContainer{
 		Name:        "Config",
 		Aliases:     []string{"conf"},
@@ -176,7 +207,7 @@ var Commands = []commandsystem.CommandHandler{
 				},
 				RequiredArgs: 2,
 				RunFunc: func(parsed *commandsystem.ParsedCommand, m *discordgo.MessageCreate) error {
-					tableManager.EvtChan <- &ChangeSettingsEvt{Channel: m.ChannelID, PlayerId: m.Author.ID, Settings: map[string]string{parsed.Args[0].Str(): parsed.Args[1].Str()}}
+					tableManager.EvtChan <- &ChangeSettingsEvt{Channel: m.ChannelID, PlayerID: m.Author.ID, Settings: map[string]string{parsed.Args[0].Str(): parsed.Args[1].Str()}}
 					return nil
 				},
 			},

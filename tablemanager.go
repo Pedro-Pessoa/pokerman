@@ -51,15 +51,33 @@ type PrintInfoEvt struct {
 }
 
 type ChangeSettingsEvt struct {
-	PlayerId string
+	PlayerID string
 	Channel  string
 	Settings map[string]string
+}
+
+type StopTableEvt struct {
+	PlayerID string
+	Channel  string
+}
+
+type KickPlayerEvt struct {
+	PlayerID     string // Sender
+	KickPlayerID string // Kicked player
+	Channel      string
+}
+
+type BanPlayerEvt struct {
+	PlayerID    string
+	BanPlayerID string
+	Channel     string
 }
 
 type StopEvt struct {
 	wg *sync.WaitGroup
 }
 
+// Table manager runs in it's own goroutine and manages all tables
 type TableManager struct {
 	tables []*Table
 
@@ -115,6 +133,8 @@ func (t *TableManager) GracefullShutdown() {
 			t.RemoveTable(v.Channel)
 		} else {
 			v.stopAfterDone = true
+			v.serverShuttingDown = true
+			go SurelySend(v.Channel, "Bot is shutting down after all tables has completed...")
 		}
 
 		v.Unlock()
@@ -205,9 +225,8 @@ func (t *TableManager) HandleEvent(e interface{}) error {
 		t.tables = append(t.tables, tbl)
 		go SurelySend(evt.Channel, "Created table, get atleast 2 people to join before you can start")
 	case *AddPlayerEvt:
-		tbl := t.GetTable(evt.Channel)
+		tbl := t.requireTable(evt.Channel)
 		if tbl == nil {
-			go SurelySend(evt.Channel, "No table here")
 			return nil
 		}
 
@@ -215,6 +234,11 @@ func (t *TableManager) HandleEvent(e interface{}) error {
 			Id:             evt.PlayerID,
 			PrivateChannel: evt.PrivateChannel,
 			Name:           evt.Name,
+		}
+
+		if tbl.IsPlayerBanned(evt.PlayerID) {
+			go SurelySend(evt.Channel, "You're banned from this table")
+			return nil
 		}
 
 		player := playerManager.GetCreatePlayer(evt.PlayerID, evt.Name)
@@ -254,46 +278,14 @@ func (t *TableManager) HandleEvent(e interface{}) error {
 		}
 
 	case *RemovePlayerEvt:
-		tbl := t.GetTable(evt.Channel)
+		tbl := t.requireTable(evt.Channel)
 		if tbl == nil {
 			return nil
 		}
 
 		tbl.Lock()
-		var p *table.PlayerState
-		for _, player := range tbl.Table.Players() {
-			if player.Player().ID() == evt.PlayerID {
-				p = player
-				break
-			}
-		}
-		if p == nil {
-			go SurelySend(evt.Channel, "You're not in the game")
-			return nil
-		}
-
-		playerCast := p.Player().(*TablePlayer)
-
-		if tbl.Running && !p.Out() {
-			playerCast.LeaveAfterFold = true
-			go SurelySend(evt.Channel, "Leaving after round (fold if you just want to begone)")
-			tbl.Unlock()
-		} else {
-
-			tbl.Table.Stand(p.Player())
-			go SurelySend(evt.Channel, "You stoop up")
-			tbl.CheckReplaceOwner()
-			// Destroy it
-			if len(tbl.Table.Players()) < 1 {
-				t.RemoveTable(tbl.Channel)
-			}
-			tbl.Unlock()
-
-			player := playerManager.GetCreatePlayer(evt.PlayerID, playerCast.Name)
-			player.Lock()
-			player.Money += p.Chips()
-			player.Unlock()
-		}
+		tbl.RemovePlayer(evt.PlayerID, false)
+		tbl.Unlock()
 	case *DestroyTableEvt:
 		t.RemoveTable(evt.Channel)
 		if t.stopping {
@@ -302,21 +294,19 @@ func (t *TableManager) HandleEvent(e interface{}) error {
 			} else {
 				log.Printf("%d tables left before stop\n", len(t.tables))
 			}
-
 		}
 	case *StartEvt:
-		for _, tbl := range t.tables {
-			if tbl.Channel == evt.Channel {
-				tbl.Lock()
-				if !tbl.Running && len(tbl.Table.Players()) >= 2 {
-					go SurelySend(evt.Channel, "Starting")
-					go tbl.Run()
-				}
-				tbl.Unlock()
+		tbl := t.requireTable(evt.Channel)
+		if tbl != nil {
+			tbl.Lock()
+			if !tbl.Running && len(tbl.Table.Players()) >= 2 {
+				go SurelySend(evt.Channel, "Starting")
+				go tbl.Run()
 			}
+			tbl.Unlock()
 		}
 	case *PrintInfoEvt:
-		tbl := t.GetTable(evt.Channel)
+		tbl := t.requireTable(evt.Channel)
 
 		if tbl != nil {
 			tbl.Lock()
@@ -325,9 +315,8 @@ func (t *TableManager) HandleEvent(e interface{}) error {
 		}
 
 	case *ChangeSettingsEvt:
-		tbl := t.GetTable(evt.Channel)
+		tbl := t.requireTable(evt.Channel)
 		if tbl == nil {
-			go SurelySend(evt.Channel, "No table here")
 			return nil
 		}
 
@@ -338,19 +327,72 @@ func (t *TableManager) HandleEvent(e interface{}) error {
 			return nil
 		}
 
-		if tbl.Owner != evt.PlayerId {
-			go SurelySend(evt.Channel, "Only owner of table can change settings")
+		if !t.requireOwner(tbl, evt.PlayerID) {
 			tbl.Unlock()
 			return nil
 		}
+
 		for key, val := range evt.Settings {
 			tbl.ChangeSetting(key, val)
 		}
 		t.SendTableInfo(evt.Channel, tbl)
 		tbl.Unlock()
+	case *StopTableEvt:
+		tbl := t.requireTable(evt.Channel)
+		if tbl == nil {
+			return nil
+		}
+
+		tbl.Lock()
+		if t.requireOwner(tbl, evt.PlayerID) {
+			tbl.stopAfterDone = true
+		}
+		tbl.Unlock()
+	case *KickPlayerEvt:
+		tbl := t.requireTable(evt.Channel)
+		if tbl == nil {
+			return nil
+		}
+		tbl.Lock()
+		if t.requireOwner(tbl, evt.PlayerID) {
+			tbl.RemovePlayer(evt.KickPlayerID, true)
+		}
+		tbl.Unlock()
+	case *BanPlayerEvt:
+		tbl := t.requireTable(evt.Channel)
+		if tbl == nil {
+			return nil
+		}
+
+		tbl.Lock()
+		if t.requireOwner(tbl, evt.PlayerID) {
+			tbl.RemovePlayer(evt.BanPlayerID, true)
+			if !tbl.IsPlayerBanned(evt.PlayerID) {
+				tbl.BannedPlayers = append(tbl.BannedPlayers, evt.PlayerID)
+			}
+		}
+		tbl.Unlock()
 	}
 
 	return nil
+}
+
+func (t *TableManager) requireOwner(tbl *Table, id string) bool {
+	if tbl.Owner != id {
+		go SurelySend(tbl.Channel, "Only owner of table can do this")
+		return false
+	}
+
+	return true
+}
+
+// If there is no table there will return nil and send a message in the channel stating no table was found
+func (t *TableManager) requireTable(channel string) *Table {
+	tbl := t.GetTable(channel)
+	if tbl == nil {
+		go SurelySend(channel, "No table in this channel")
+	}
+	return tbl
 }
 
 func (t *TableManager) RemoveTable(channel string) {
@@ -366,8 +408,8 @@ func (t *TableManager) RemoveTable(channel string) {
 func (t *TableManager) SendTableInfo(channel string, tbl *Table) {
 	stakes := tbl.Table.Stakes()
 
-	tableConfigStr := fmt.Sprintf("Table Config:\n - Owner: %s\n - Game: **%s**\n - Seats: **%d**\n - Limit: **%s**\n - Stakes (small, big, ante): **%d**, **%d**, **%d**\n",
-		tbl.OwnerName, tbl.Table.Game().String(), tbl.Table.NumOfSeats(), tbl.Table.Limit(), stakes.SmallBet, stakes.BigBet, stakes.Ante)
+	tableConfigStr := fmt.Sprintf("Table Config:\n - Owner: %s\n - Game: **%s**\n - Timeout: **%d**\n - Seats: **%d**\n - Limit: **%s**\n - Stakes (small, big, ante): **%d**, **%d**, **%d**\n",
+		tbl.OwnerName, tbl.Table.Game().String(), tbl.GetTimeout(), tbl.Table.NumOfSeats(), tbl.Table.Limit(), stakes.SmallBet, stakes.BigBet, stakes.Ante)
 
 	playersStr := ""
 
@@ -376,7 +418,7 @@ func (t *TableManager) SendTableInfo(channel string, tbl *Table) {
 		playersStr += fmt.Sprintf("Seat [%d] %s: $%d\n", k, tablePlayer.Name, v.Chips())
 	}
 
-	go SurelySend(channel, tableConfigStr+"\n"+playersStr)
+	go SurelySend(channel, tableConfigStr+"\n"+playersStr+"\n+You can change settings using conf set {setting} {value}")
 }
 
 func (t *TableManager) GetTable(channel string) *Table {
