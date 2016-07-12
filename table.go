@@ -126,13 +126,6 @@ func (t *Table) run() {
 	}
 }
 
-func GiveMoney(id, name string, money int) {
-	player := playerManager.GetCreatePlayer(id, name)
-	player.Lock()
-	player.Money += money
-	player.Unlock()
-}
-
 func (t *Table) SendPlayerCards() {
 	for _, player := range t.Table.Players() {
 		if player.Out() {
@@ -202,12 +195,6 @@ func (p *TablePlayer) FromID(id string) (table.Player, error) {
 }
 
 func (p *TablePlayer) Action() (table.Action, int) {
-
-	// get action from input
-	// actions := []string{}
-	// for _, a := range tbl.ValidActions() {
-	// 	actions = append(actions, strings.ToLower(string(a)))
-	// }
 
 	current := p.Table.Table.CurrentPlayer()
 	outstanding := p.Table.Table.Outstanding()
@@ -302,10 +289,6 @@ func (p *TablePlayer) Action() (table.Action, int) {
 			continue
 		}
 
-		// if action == table.Raise {
-		// 	chips += int64(p.Table.Table.Outstanding())
-		// }
-
 		if chips <= 0 {
 			go SurelySend(p.Table.Channel, "Can't raise/bet anythign less then 1 >:(")
 			continue
@@ -335,6 +318,40 @@ func (t *Table) MaybeSendTable() {
 		go SurelySend(t.Channel, fmt.Sprintf("Board\n```\n%s\n```\n%s", createAsciiCards(board, " "), cardsStr))
 		t.printedBoardState = len(board)
 	}
+}
+
+func (t *Table) ChangeSetting(key string, strVal string) {
+
+	trimmed := strings.TrimSpace(strVal)
+
+	floatVal, _ := strconv.ParseFloat(trimmed, 64)
+	intVal := int(floatVal)
+
+	currentConfig := t.Table.Config()
+
+	switch strings.ToLower(key) {
+	case "smallbet", "small":
+		currentConfig.Stakes.SmallBet = intVal
+	case "bigbet", "big":
+		currentConfig.Stakes.BigBet = intVal
+	case "ante":
+		currentConfig.Stakes.Ante = intVal
+	case "limit":
+		switch strings.ToLower(strVal) {
+		case "nl", "no", "nolimit":
+			currentConfig.Limit = table.NoLimit
+		case "fl", "fixed", "fixedlimit":
+			currentConfig.Limit = table.FixedLimit
+		case "pl", "pot", "potlimit":
+			currentConfig.Limit = table.PotLimit
+		}
+	case "seats":
+		currentConfig.NumOfSeats = intVal
+	case "game":
+		go SurelySend(t.Channel, "TODO")
+	}
+
+	t.Table.SetConfig(currentConfig)
 }
 
 func createAsciiCards(cards []*hand.Card, spacing string) string {

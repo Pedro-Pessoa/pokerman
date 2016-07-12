@@ -47,7 +47,8 @@ type PrintInfoEvt struct {
 
 type ChangeSettingsEvt struct {
 	PlayerId string
-	settings map[string]interface{}
+	Channel  string
+	Settings map[string]string
 }
 
 type StopEvt struct {
@@ -311,6 +312,29 @@ func (t *TableManager) HandleEvent(e interface{}) error {
 		}
 
 	case *ChangeSettingsEvt:
+		tbl := t.GetTable(evt.Channel)
+		if tbl == nil {
+			go SurelySend(evt.Channel, "No table here")
+			return nil
+		}
+
+		tbl.Lock()
+		if tbl.Running {
+			go SurelySend(evt.Channel, "Can't change setting while table is running")
+			tbl.Unlock()
+			return nil
+		}
+
+		if tbl.Owner != evt.PlayerId {
+			go SurelySend(evt.Channel, "Only owner of table can change settings")
+			tbl.Unlock()
+			return nil
+		}
+		for key, val := range evt.Settings {
+			tbl.ChangeSetting(key, val)
+		}
+		t.SendTableInfo(evt.Channel, tbl)
+		tbl.Unlock()
 	}
 
 	return nil
@@ -329,7 +353,7 @@ func (t *TableManager) RemoveTable(channel string) {
 func (t *TableManager) SendTableInfo(channel string, tbl *Table) {
 	stakes := tbl.Table.Stakes()
 
-	tableConfigStr := fmt.Sprintf("Table Config:\n - Owner: %s\n - Game: **%s**\n -  Seats: **%d**\n - Limit: **%s**\n - Stakes (small, big, ante): **%d**, **%d**, **%d**\n",
+	tableConfigStr := fmt.Sprintf("Table Config:\n - Owner: %s\n - Game: **%s**\n - Seats: **%d**\n - Limit: **%s**\n - Stakes (small, big, ante): **%d**, **%d**, **%d**\n",
 		tbl.OwnerName, tbl.Table.Game().String(), tbl.Table.NumOfSeats(), tbl.Table.Limit(), stakes.SmallBet, stakes.BigBet, stakes.Ante)
 
 	playersStr := ""

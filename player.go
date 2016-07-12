@@ -114,3 +114,10 @@ func (pm *PlayerManager) GetCreatePlayer(id, name string) *Player {
 	pm.AddPlayer(player, false)
 	return player
 }
+
+func GiveMoney(id, name string, money int) {
+	player := playerManager.GetCreatePlayer(id, name)
+	player.Lock()
+	player.Money += money
+	player.Unlock()
+}

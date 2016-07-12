@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"github.com/bwmarrin/discordgo"
 	"github.com/jonas747/dutil/commandsystem"
-	"log"
 )
 
 var Commands = []commandsystem.CommandHandler{
@@ -19,7 +18,6 @@ var Commands = []commandsystem.CommandHandler{
 			if parsed.Args[0] != nil {
 				target = parsed.Args[0].Str()
 			}
-			log.Println(target)
 			help := cmdSystem.GenerateHelp(target, 0)
 			dgo.ChannelMessageSend(m.ChannelID, help)
 			return nil
@@ -154,6 +152,36 @@ var Commands = []commandsystem.CommandHandler{
 			return nil
 		},
 	},
+	&commandsystem.CommandContainer{
+		Name:        "Config",
+		Aliases:     []string{"conf"},
+		Description: "Changes a table configuration",
+		Children: []commandsystem.CommandHandler{
+			&commandsystem.SimpleCommand{
+				Name:        "Get",
+				Aliases:     []string{"g", "print", "show"},
+				Description: "Shows the current config",
+				RunFunc: func(parsed *commandsystem.ParsedCommand, m *discordgo.MessageCreate) error {
+					tableManager.EvtChan <- &PrintInfoEvt{Channel: m.ChannelID}
+					return nil
+				},
+			},
+			&commandsystem.SimpleCommand{
+				Name:        "Set",
+				Aliases:     []string{"s"},
+				Description: "Chages a config setting",
+				Arguments: []*commandsystem.ArgumentDef{
+					&commandsystem.ArgumentDef{Name: "Key", Description: "What to change", Type: commandsystem.ArgumentTypeString},
+					&commandsystem.ArgumentDef{Name: "Value", Description: "The new value", Type: commandsystem.ArgumentTypeString},
+				},
+				RequiredArgs: 2,
+				RunFunc: func(parsed *commandsystem.ParsedCommand, m *discordgo.MessageCreate) error {
+					tableManager.EvtChan <- &ChangeSettingsEvt{Channel: m.ChannelID, PlayerId: m.Author.ID, Settings: map[string]string{parsed.Args[0].Str(): parsed.Args[1].Str()}}
+					return nil
+				},
+			},
+		},
+	},
 	&commandsystem.SimpleCommand{
 		Name:        "Leave",
 		Description: "Leaves a table",
@@ -184,6 +212,6 @@ func GetCreatePrivateChannel(userID string) (string, error) {
 		return "", err
 	}
 
-	dgo.State.ChannelAdd(channel)
+	go dgo.State.ChannelAdd(channel)
 	return channel.ID, nil
 }
