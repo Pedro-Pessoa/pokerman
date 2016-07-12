@@ -6,6 +6,7 @@ import (
 	"github.com/jonas747/joker/hand"
 	"github.com/jonas747/joker/table"
 	"log"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,9 +29,10 @@ type Table struct {
 	Owner     string
 	OwnerName string
 
-	Channel    string
-	MessageEvt chan *PlayerMessage
-	Running    bool
+	Channel       string
+	ActionEvt     chan *ActionEvt
+	Running       bool
+	WaitingToJoin []*TablePlayer
 
 	hasSentCards      bool
 	printedBoardState int
@@ -52,11 +54,11 @@ func (t *Table) Run() {
 	t.emptyChannel()
 }
 
-// Incase there any messages pending on the channel, empty it when we stop running
+// Incase there any messages pending on the channel, empty it when we stop running to avoid deadlocks
 func (t *Table) emptyChannel() {
 	for {
 		select {
-		case <-t.MessageEvt:
+		case <-t.ActionEvt:
 			continue
 		default:
 			return
@@ -64,6 +66,7 @@ func (t *Table) emptyChannel() {
 	}
 }
 
+// Run the tableee
 func (t *Table) run() {
 	for {
 		results, done, err := t.Table.Next()
@@ -73,7 +76,7 @@ func (t *Table) run() {
 					cast := v.Player().(*TablePlayer)
 					GiveMoney(cast.Id, cast.Name, v.Chips())
 				}
-				// Mark ready
+				// Remove it from tablemanager
 				tableManager.EvtChan <- &DestroyTableEvt{Channel: t.Channel}
 			}
 
@@ -91,15 +94,16 @@ func (t *Table) run() {
 		if results != nil {
 			t.hasSentCards = false
 			t.printedBoardState = 0
-			go SurelySend(t.Channel, "Results:\n"+printResults(t.Table, results)+"\nStarting next hand in 5 seconds")
+			go SurelySend(t.Channel, "Results:\n"+printResults(t.Table, results)+"\nStarting next hand in 10 seconds")
+		}
 
-		}
-		if results == nil {
-			t.MaybeSendTable()
-		}
 		if err != nil {
 			log.Println("Error", err)
 			go SurelySend(t.Channel, "Error "+err.Error())
+		}
+
+		if results == nil {
+			t.MaybeSendTable()
 		}
 
 		for _, v := range t.Table.Players() {
@@ -117,7 +121,7 @@ func (t *Table) run() {
 		// Sleep at the end and maybe send cards
 		if results != nil {
 			t.Unlock()
-			time.Sleep(time.Second * 5) // take a nap zzzzz
+			time.Sleep(time.Second * 10) // take a nap zzzzz
 			t.Lock()
 		} else if !t.hasSentCards {
 			t.SendPlayerCards()
@@ -128,7 +132,7 @@ func (t *Table) run() {
 
 func (t *Table) SendPlayerCards() {
 	for _, player := range t.Table.Players() {
-		if player.Out() {
+		if player.Out() || player.Chips() < 1 {
 			continue
 		}
 
@@ -220,13 +224,7 @@ type TablePlayer struct {
 	PrivateChannel string
 	LeaveAfterFold bool
 
-	receivedCards         bool
 	foldedAndReadyToLeave bool
-}
-
-type PlayerMessage struct {
-	From    string
-	Message string
 }
 
 func (p *TablePlayer) ID() string {
@@ -240,9 +238,6 @@ func (p *TablePlayer) FromID(id string) (table.Player, error) {
 func (p *TablePlayer) Action() (table.Action, int) {
 
 	current := p.Table.Table.CurrentPlayer()
-	if !p.receivedCards {
-		p.SendCards(current)
-	}
 
 	outstanding := p.Table.Table.Outstanding()
 
@@ -268,8 +263,8 @@ func (p *TablePlayer) Action() (table.Action, int) {
 	// Fold automatically after 30 seconds
 	after := time.After(time.Minute * 3)
 	for {
-		cmd := ""
 
+		var action *Action
 		p.Table.Unlock()
 		select {
 		case <-after:
@@ -282,32 +277,46 @@ func (p *TablePlayer) Action() (table.Action, int) {
 			}
 
 			if canFold {
-				cmd = "fold"
+				action = &Action{IsTableAction: true, TableAction: table.Fold}
 			} else {
-				cmd = "check"
+				action = &Action{IsTableAction: true, TableAction: table.Check}
 			}
-		case pm := <-p.Table.MessageEvt:
-			if pm.From != p.Id {
+		case actionEvt := <-p.Table.ActionEvt:
+			if actionEvt.PlayerID != p.Id {
+				p.Table.Lock()
 				continue
 			}
-			cmd = pm.Message
+
+			action = actionEvt.Action
 		}
 		p.Table.Lock()
 
-		split := strings.Fields(cmd)
-		if len(split) < 1 {
-			continue
-		}
-
 		// parse action
-		action, err := actionFromInput(strings.ToLower(split[0]))
-		if err != nil {
-			continue
+		found := false
+		if action.IsTableAction {
+			for _, v := range validActions {
+				if v == action.TableAction {
+					found = true
+				}
+			}
 		}
 
-		found := false
-		for _, v := range validActions {
-			if v == action {
+		chipAmountSet := false
+		chipAmount := 0
+
+		if !found {
+			if action.AllIn {
+				action = &Action{IsTableAction: true}
+				if outstanding >= current.Chips() {
+					action.TableAction = table.Call
+				} else {
+					if outstanding > 0 { // Raise
+						action.TableAction = table.Raise
+					} else {
+						action.TableAction = table.Bet
+					}
+					chipAmount = max
+				}
 				found = true
 			}
 		}
@@ -318,30 +327,35 @@ func (p *TablePlayer) Action() (table.Action, int) {
 			continue
 		}
 
-		if !(action == table.Bet || action == table.Raise) {
-			if action == table.Fold && p.LeaveAfterFold {
+		if !(action.TableAction == table.Bet || action.TableAction == table.Raise) {
+			if action.TableAction == table.Fold && p.LeaveAfterFold {
 				p.foldedAndReadyToLeave = true
 			}
-			return action, 0
+			return action.TableAction, 0
 		}
 
-		if len(split) < 2 {
-			go SurelySend(p.Table.Channel, "Try again by also specifying amount")
-			continue
+		if !chipAmountSet {
+
+			if action.RestMessage == "" {
+				go SurelySend(p.Table.Channel, "Try again by also specifying amount")
+				continue
+			}
+
+			chips, err := strconv.ParseInt(action.RestMessage, 10, 64)
+			if err != nil {
+				go SurelySend(p.Table.Channel, "Failed parsing number >:O")
+				continue
+			}
+			if chips <= 0 {
+				go SurelySend(p.Table.Channel, "Can't raise/bet anythign less then 1 >:(")
+				continue
+			}
+
+			chipAmount = int(chips)
+
 		}
 
-		chips, err := strconv.ParseInt(split[1], 10, 64)
-		if err != nil {
-			go SurelySend(p.Table.Channel, "Failed parsing number >:O")
-			continue
-		}
-
-		if chips <= 0 {
-			go SurelySend(p.Table.Channel, "Can't raise/bet anythign less then 1 >:(")
-			continue
-		}
-
-		return action, int(chips)
+		return action.TableAction, chipAmount
 	}
 
 	return table.Fold, 0
@@ -359,7 +373,6 @@ func (p *TablePlayer) SendCards(player *table.PlayerState) {
 		cards[k] = hc.Card
 	}
 	cardsStr += "]"
-	p.receivedCards = true
 	go SurelySend(p.PrivateChannel, fmt.Sprintf("Your hand\n```\n%s\n```\n%s", createAsciiCards(cards, " "), cardsStr))
 }
 
@@ -406,7 +419,43 @@ func printResults(tbl *table.Table, results map[int][]*table.Result) string {
 	return out
 }
 
-func actionFromInput(input string) (table.Action, error) {
+var AllInRegex = regexp.MustCompile("/^a+ll+ i+n+$/i")
+
+type Action struct {
+	IsTableAction bool
+	TableAction   table.Action
+
+	AllIn bool
+
+	RestMessage string
+}
+
+func GetAction(input string) *Action {
+	lower := strings.ToLower(input)
+
+	split := strings.SplitN(lower, " ", 2)
+	if len(split) < 1 {
+		return nil
+	}
+
+	ta, err := TableAction(lower[0])
+	if err == nil {
+		rest := ""
+		if len(split) > 1 {
+			rest = split[1]
+		}
+
+		return &Action{IsTableAction: true, TableAction: ta, RestMessage: rest}
+	}
+
+	if AllInRegex.MatchString(lower) {
+		return &Action{AllIn: true}
+	}
+
+	return nil
+}
+
+func TableAction(input string) (table.Action, error) {
 	switch input {
 	case fold:
 		return table.Fold, nil

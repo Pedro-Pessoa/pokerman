@@ -19,7 +19,7 @@ var Commands = []commandsystem.CommandHandler{
 				target = parsed.Args[0].Str()
 			}
 			help := cmdSystem.GenerateHelp(target, 0)
-			dgo.ChannelMessageSend(m.ChannelID, help)
+			dgo.ChannelMessageSend(m.ChannelID, "**Help** - *(For problems/whatever contact jonas747#3124)*\n"+help+"\n"+VERSION)
 			return nil
 		},
 	},

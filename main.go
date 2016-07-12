@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	VERSION = "PokerMan 0.2 Alpha"
+	VERSION = "PokerMan 0.3 Alpha"
 )
 
 var (
@@ -106,14 +106,11 @@ func HandleServerJoin(s *discordgo.Session, g *discordgo.GuildCreate) {
 }
 
 func HandleMessageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
-	split := strings.Fields(m.Content)
-	if len(split) < 1 {
-		return
-	}
-	_, err := actionFromInput(strings.ToLower(split[0]))
-	if err == nil {
+	action := GetAction(m.Content)
+	if action != nil {
+		log.Println("Got action mon")
 		// An action lets pass it to tablemanager
-		tableManager.EvtChan <- m
+		tableManager.EvtChan <- &ActionEvt{Action: action, Channel: m.ChannelID, PlayerID: m.Author.ID}
 	}
 }
 

@@ -3,15 +3,20 @@ package main
 import (
 	"errors"
 	"fmt"
-	"github.com/bwmarrin/discordgo"
 	"github.com/jonas747/joker/hand"
 	"github.com/jonas747/joker/table"
 	"log"
 	"sync"
 )
 
+type ActionEvt struct {
+	PlayerID string
+	Channel  string
+	Action   *Action
+}
+
 type StartEvt struct {
-	PlayerId string
+	PlayerID string
 	Channel  string
 }
 
@@ -116,23 +121,30 @@ func (t *TableManager) GracefullShutdown() {
 	}
 }
 
+func (t *TableManager) HandleAction(tbl *Table, evt *ActionEvt) {
+	tbl.Lock()
+	defer tbl.Unlock()
+
+	if !tbl.Running {
+		return
+	}
+
+	if tbl.Table.CurrentPlayer().Player().ID() == evt.PlayerID {
+		go func() {
+			tbl.ActionEvt <- evt
+		}()
+	}
+}
+
 func (t *TableManager) HandleEvent(e interface{}) error {
 	switch evt := e.(type) {
-	case *discordgo.MessageCreate:
-		authorId := evt.Author.ID
-		for _, tbl := range t.tables {
-			tbl.Lock()
-			if tbl.Running {
-				if tbl.Table.CurrentPlayer().Player().ID() == authorId {
-					go func() {
-						tbl.MessageEvt <- &PlayerMessage{From: authorId, Message: evt.Content}
-					}()
-					tbl.Unlock()
-					break
-				}
-			}
-			tbl.Unlock()
+	case *ActionEvt:
+		tbl := t.GetTable(evt.Channel)
+		if tbl == nil {
+			return nil
 		}
+
+		t.HandleAction(tbl, evt)
 	case *CreateTableEvt:
 
 		// Check if there is already a table in this channel
@@ -157,11 +169,11 @@ func (t *TableManager) HandleEvent(e interface{}) error {
 		coreTable := table.New(opts, hand.NewDealer())
 
 		tbl := &Table{
-			Table:      coreTable,
-			Channel:    evt.Channel,
-			Owner:      evt.PlayerID,
-			OwnerName:  evt.Name,
-			MessageEvt: make(chan *PlayerMessage),
+			Table:     coreTable,
+			Channel:   evt.Channel,
+			Owner:     evt.PlayerID,
+			OwnerName: evt.Name,
+			ActionEvt: make(chan *ActionEvt),
 		}
 
 		player := playerManager.GetCreatePlayer(evt.PlayerID, evt.Name)
