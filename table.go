@@ -85,7 +85,7 @@ func (t *Table) run() {
 				if t.stopAfterDone {
 					msgText = "Bot is shutting down"
 				}
-				go SurelySend(t.Channel, "Results:\n"+printResults(t.Table, results)+"\n"+msgText)
+				SurelySend(t.Channel, "Results:\n"+printResults(t.Table, results)+"\n"+msgText)
 			}
 
 			return
