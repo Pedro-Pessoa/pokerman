@@ -419,7 +419,7 @@ func printResults(tbl *table.Table, results map[int][]*table.Result) string {
 	return out
 }
 
-var AllInRegex = regexp.MustCompile("/^a+ll+ i+n+$/i")
+var AllInRegex = regexp.MustCompile("^a+ll+ i+n")
 
 type Action struct {
 	IsTableAction bool
