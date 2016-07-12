@@ -316,6 +316,7 @@ func (p *TablePlayer) Action() (table.Action, int) {
 						action.TableAction = table.Bet
 					}
 					chipAmount = max
+					chipAmountSet = true
 				}
 				found = true
 			}
