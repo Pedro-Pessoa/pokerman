@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -83,10 +84,13 @@ func HandleSignal(stopchan chan os.Signal) {
 	var wg sync.WaitGroup
 
 	// Stop tables first
-	log.Println("Waiting for tablemanager to finish")
+	log.Println("\nWaiting for tablemanager to finish")
 	wg.Add(1)
 	tableManager.EvtChan <- &StopEvt{wg: &wg}
 	wg.Wait()
+
+	// Sleep for a second to allow modifying moneis
+	time.Sleep(time.Second)
 
 	// Then save players
 	log.Println("Waiting for playermanager to finish")
