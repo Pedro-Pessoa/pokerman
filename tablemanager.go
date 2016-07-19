@@ -189,6 +189,7 @@ func (t *TableManager) HandleEvent(e interface{}) error {
 		coreTable := table.New(opts, hand.NewDealer())
 
 		tbl := &Table{
+			Manager:   t,
 			Table:     coreTable,
 			Channel:   evt.Channel,
 			Owner:     evt.PlayerID,
