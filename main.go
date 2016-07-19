@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	VERSION = "PokerMan 0.4 Alpha"
+	VERSION = "PokerMan 0.5 Alpha"
 )
 
 var (
