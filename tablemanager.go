@@ -149,6 +149,10 @@ func (t *TableManager) HandleAction(tbl *Table, evt *ActionEvt) {
 		return
 	}
 
+	if tbl.Table.CurrentPlayer() == nil {
+		return
+	}
+
 	if tbl.Table.CurrentPlayer().Player().ID() == evt.PlayerID {
 		go func() {
 			tbl.ActionEvt <- evt
