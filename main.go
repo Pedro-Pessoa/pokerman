@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	VERSION = "PokerMan 0.5 Alpha"
+	VERSION = "PokerMan 0.6 Alpha"
 )
 
 var (
@@ -54,12 +54,9 @@ func main() {
 	session, err := discordgo.New(flagToken)
 	PanicErr(err)
 
-	cmdSystem = &commandsystem.System{
-		Session: session,
-	}
+	cmdSystem = commandsystem.NewSystem(session, "")
 	cmdSystem.RegisterCommands(Commands...)
 
-	session.AddHandler(cmdSystem.HandleMessageCreate)
 	session.AddHandler(HandleMessageCreate)
 	session.AddHandler(HandleReady)
 	session.AddHandler(HandleServerJoin)
