@@ -13,7 +13,7 @@ var Commands = []commandsystem.CommandHandler{
 		Arguments: []*commandsystem.ArgumentDef{
 			&commandsystem.ArgumentDef{Name: "command", Description: "Optionally specify a command to show help for", Type: commandsystem.ArgumentTypeString},
 		},
-		RunFunc: func(parsed *commandsystem.ParsedCommand, source commandsystem.CommandSource, m *discordgo.MessageCreate) error {
+		RunFunc: func(parsed *commandsystem.ParsedCommand, m *discordgo.MessageCreate) error {
 			target := ""
 			if parsed.Args[0] != nil {
 				target = parsed.Args[0].Str()
@@ -27,7 +27,7 @@ var Commands = []commandsystem.CommandHandler{
 		Name:        "Invite",
 		Description: "Responds with bot invite link",
 		RunInDm:     true,
-		RunFunc: func(parsed *commandsystem.ParsedCommand, source commandsystem.CommandSource, m *discordgo.MessageCreate) error {
+		RunFunc: func(parsed *commandsystem.ParsedCommand, m *discordgo.MessageCreate) error {
 			dgo.ChannelMessageSend(m.ChannelID, "You smell bad https://discordapp.com/oauth2/authorize?client_id=201163424485343232&scope=bot&permissions=101376")
 			return nil
 		},
@@ -39,7 +39,7 @@ var Commands = []commandsystem.CommandHandler{
 		Arguments: []*commandsystem.ArgumentDef{
 			&commandsystem.ArgumentDef{Name: "User", Description: "Optionally specify a user", Type: commandsystem.ArgumentTypeUser},
 		},
-		RunFunc: func(parsed *commandsystem.ParsedCommand, source commandsystem.CommandSource, m *discordgo.MessageCreate) error {
+		RunFunc: func(parsed *commandsystem.ParsedCommand, m *discordgo.MessageCreate) error {
 			user := m.Author
 			if parsed.Args[0] != nil {
 				user = parsed.Args[0].DiscordUser()
@@ -59,7 +59,7 @@ var Commands = []commandsystem.CommandHandler{
 		Name:        "FreeMoney",
 		Aliases:     []string{"fm", "giefmoney", "gief", "mmm"},
 		Description: "Gives you $50 if you have less than that",
-		RunFunc: func(parsed *commandsystem.ParsedCommand, source commandsystem.CommandSource, m *discordgo.MessageCreate) error {
+		RunFunc: func(parsed *commandsystem.ParsedCommand, m *discordgo.MessageCreate) error {
 			player := playerManager.GetCreatePlayer(m.Author.ID, m.Author.Username)
 
 			player.Lock()
@@ -87,7 +87,7 @@ var Commands = []commandsystem.CommandHandler{
 			&commandsystem.ArgumentDef{Name: "Stakes-min", Description: "Big stakes for this table", Type: commandsystem.ArgumentTypeNumber},
 		},
 		RequiredArgs: 3,
-		RunFunc: func(parsed *commandsystem.ParsedCommand, source commandsystem.CommandSource, m *discordgo.MessageCreate) error {
+		RunFunc: func(parsed *commandsystem.ParsedCommand, m *discordgo.MessageCreate) error {
 			privateChannel, err := GetCreatePrivateChannel(m.Author.ID)
 			if err != nil {
 				return err
@@ -119,7 +119,7 @@ var Commands = []commandsystem.CommandHandler{
 			&commandsystem.ArgumentDef{Name: "Buy in", Description: "Buy in amount, has to be larger than 50*min-bet", Type: commandsystem.ArgumentTypeNumber},
 		},
 		RequiredArgs: 1,
-		RunFunc: func(parsed *commandsystem.ParsedCommand, source commandsystem.CommandSource, m *discordgo.MessageCreate) error {
+		RunFunc: func(parsed *commandsystem.ParsedCommand, m *discordgo.MessageCreate) error {
 			privateChannel, err := GetCreatePrivateChannel(m.Author.ID)
 			if err != nil {
 				return err
@@ -143,7 +143,7 @@ var Commands = []commandsystem.CommandHandler{
 		Name:        "Start",
 		Aliases:     []string{"s"},
 		Description: "Starts a table",
-		RunFunc: func(parsed *commandsystem.ParsedCommand, source commandsystem.CommandSource, m *discordgo.MessageCreate) error {
+		RunFunc: func(parsed *commandsystem.ParsedCommand, m *discordgo.MessageCreate) error {
 			evt := &StartEvt{
 				Channel: m.ChannelID,
 			}
@@ -155,7 +155,7 @@ var Commands = []commandsystem.CommandHandler{
 	&commandsystem.SimpleCommand{
 		Name:        "Stop",
 		Description: "Stops a table, maybe to take a break or something",
-		RunFunc: func(parsed *commandsystem.ParsedCommand, source commandsystem.CommandSource, m *discordgo.MessageCreate) error {
+		RunFunc: func(parsed *commandsystem.ParsedCommand, m *discordgo.MessageCreate) error {
 			tableManager.EvtChan <- &StopTableEvt{PlayerID: m.Author.ID, Channel: m.ChannelID}
 			return nil
 		},
@@ -167,7 +167,7 @@ var Commands = []commandsystem.CommandHandler{
 			&commandsystem.ArgumentDef{Name: "Target", Description: "Player to kick", Type: commandsystem.ArgumentTypeUser},
 		},
 		RequiredArgs: 1,
-		RunFunc: func(parsed *commandsystem.ParsedCommand, source commandsystem.CommandSource, m *discordgo.MessageCreate) error {
+		RunFunc: func(parsed *commandsystem.ParsedCommand, m *discordgo.MessageCreate) error {
 			target := parsed.Args[0].DiscordUser()
 			tableManager.EvtChan <- &KickPlayerEvt{PlayerID: m.Author.ID, KickPlayerID: target.ID, Channel: m.ChannelID}
 			return nil
@@ -177,7 +177,7 @@ var Commands = []commandsystem.CommandHandler{
 		Name:         "Ban",
 		Description:  "Bans a player from your table >:O",
 		RequiredArgs: 1,
-		RunFunc: func(parsed *commandsystem.ParsedCommand, source commandsystem.CommandSource, m *discordgo.MessageCreate) error {
+		RunFunc: func(parsed *commandsystem.ParsedCommand, m *discordgo.MessageCreate) error {
 			target := parsed.Args[0].DiscordUser()
 			tableManager.EvtChan <- &BanPlayerEvt{PlayerID: m.Author.ID, BanPlayerID: target.ID, Channel: m.ChannelID}
 			return nil
@@ -192,7 +192,7 @@ var Commands = []commandsystem.CommandHandler{
 				Name:        "Get",
 				Aliases:     []string{"g", "print", "show"},
 				Description: "Shows the current config",
-				RunFunc: func(parsed *commandsystem.ParsedCommand, source commandsystem.CommandSource, m *discordgo.MessageCreate) error {
+				RunFunc: func(parsed *commandsystem.ParsedCommand, m *discordgo.MessageCreate) error {
 					tableManager.EvtChan <- &PrintInfoEvt{Channel: m.ChannelID}
 					return nil
 				},
@@ -206,7 +206,7 @@ var Commands = []commandsystem.CommandHandler{
 					&commandsystem.ArgumentDef{Name: "Value", Description: "The new value", Type: commandsystem.ArgumentTypeString},
 				},
 				RequiredArgs: 2,
-				RunFunc: func(parsed *commandsystem.ParsedCommand, source commandsystem.CommandSource, m *discordgo.MessageCreate) error {
+				RunFunc: func(parsed *commandsystem.ParsedCommand, m *discordgo.MessageCreate) error {
 					tableManager.EvtChan <- &ChangeSettingsEvt{Channel: m.ChannelID, PlayerID: m.Author.ID, Settings: map[string]string{parsed.Args[0].Str(): parsed.Args[1].Str()}}
 					return nil
 				},
@@ -216,7 +216,7 @@ var Commands = []commandsystem.CommandHandler{
 	&commandsystem.SimpleCommand{
 		Name:        "Leave",
 		Description: "Leaves a table",
-		RunFunc: func(parsed *commandsystem.ParsedCommand, source commandsystem.CommandSource, m *discordgo.MessageCreate) error {
+		RunFunc: func(parsed *commandsystem.ParsedCommand, m *discordgo.MessageCreate) error {
 			evt := &RemovePlayerEvt{
 				PlayerID: m.Author.ID,
 				Channel:  m.ChannelID,
